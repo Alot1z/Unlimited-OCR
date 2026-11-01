@@ -119,9 +119,9 @@ def assess_device(
 
     if model_uses_triton_kernels and not triton_installed:
         findings.append({
-            "level": "warning",
+            "level": "info",
             "code": "TRITON_NOT_INSTALLED",
-            "message": "Triton is absent. This only helps if the model has a verified non-Triton fallback; it does not prove compatibility.",
+            "message": "Triton is absent; the Pascal runner disables the model's optional Triton paths and selects its source-level PyTorch fallback. This is not proof of successful inference.",
         })
 
     return {
@@ -184,7 +184,7 @@ def run_probe(torch_module: Any | None = None) -> dict[str, Any]:
     try:
         import triton  # noqa: F401
         triton_installed = True
-    except ImportError:
+    except Exception:
         triton_installed = False
 
     report = assess_device(

@@ -37,6 +37,7 @@ def assess_device(
     bf16_supported: bool,
     triton_installed: bool,
     model_uses_triton_kernels: bool = True,
+    non_triton_fallback_available: bool = True,
 ) -> dict[str, Any]:
     """Assess known static risks without claiming end-to-end model support."""
     major, minor = capability
@@ -71,18 +72,28 @@ def assess_device(
         findings.append({
             "level": "warning",
             "code": "BF16_UNAVAILABLE",
-            "message": "BF16 is not reported as supported. The documented BF16 load path is unsuitable; FP16 remains only a candidate until model kernels are verified.",
+            "message": "BF16 is not reported as supported. The documented BF16 load path is unsuitable; FP16 is the local candidate.",
         })
 
     triton_compatibility = "not-applicable"
     if model_uses_triton_kernels and (major, minor) < (7, 0):
-        triton_compatibility = "unsupported-architecture"
-        blockers.append("TRITON_ARCH_UNSUPPORTED")
-        findings.append({
-            "level": "error",
-            "code": "TRITON_ARCH_UNSUPPORTED",
-            "message": "The model source includes Triton sparse-attention kernels, while the Triton Windows compatibility matrix lists Pascal (sm_61) as unsupported. A verified non-Triton model fallback is required.",
-        })
+        triton_compatibility = (
+            "unsupported-architecture-fallback-available"
+            if non_triton_fallback_available else "unsupported-architecture"
+        )
+        if non_triton_fallback_available:
+            findings.append({
+                "level": "warning",
+                "code": "TRITON_FALLBACK_AVAILABLE_UNVERIFIED",
+                "message": "Pascal cannot run the model's Triton kernels, but the pinned source has pure-PyTorch dense fallbacks. The local runner disables DASH, gather, and indexer Triton paths; the fallback still needs a real model smoke test and may use more memory/time.",
+            })
+        else:
+            blockers.append("TRITON_ARCH_UNSUPPORTED")
+            findings.append({
+                "level": "error",
+                "code": "TRITON_ARCH_UNSUPPORTED",
+                "message": "The model requires Triton kernels on this architecture and no non-Triton fallback is available.",
+            })
     elif model_uses_triton_kernels:
         triton_compatibility = "architecture-not-flagged"
         findings.append({
@@ -122,6 +133,7 @@ def assess_device(
         "bf16_supported": bool(bf16_supported),
         "triton_installed": bool(triton_installed),
         "triton_compatibility": triton_compatibility,
+        "non_triton_fallback_available": bool(non_triton_fallback_available),
         "fp16_parameter_storage_gib": round(fp16_weights, 2),
         "blockers": blockers,
         "findings": findings,
@@ -183,6 +195,7 @@ def run_probe(torch_module: Any | None = None) -> dict[str, Any]:
         architectures=torch_module.cuda.get_arch_list(),
         bf16_supported=bf16_supported,
         triton_installed=triton_installed,
+        non_triton_fallback_available=True,
     )
     report["torch_version"] = getattr(torch_module, "__version__", "unknown")
     report["torch_cuda_version"] = getattr(torch_module.version, "cuda", None)

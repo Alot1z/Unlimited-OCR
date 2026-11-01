@@ -69,6 +69,10 @@
   <img src="assets/leaderboard.png" width="1000" alt="Performance" />
 </div>
 
+## Local GPU compatibility
+
+The reference setup below is documented for an NVIDIA A800 80 GB and uses BF16. It is not a general low-VRAM or Pascal recipe. For the current GTX 1080 Ti / Pascal investigation, run the non-invasive preflight with `python -m compat.gtx1080ti` and read [docs/GTX-1080-TI.md](docs/GTX-1080-TI.md). End-to-end model inference on Pascal is not currently verified.
+
 ## Inference
 
 > Unlimited OCR 2 supports **Transformers** (native, for quick tests) and **SGLang** (recommended for serving).

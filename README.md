@@ -71,7 +71,16 @@
 
 ## Local GPU compatibility
 
-The reference setup below is documented for an NVIDIA A800 80 GB and uses BF16. It is not a general low-VRAM or Pascal recipe. For the current GTX 1080 Ti / Pascal investigation, run the non-invasive preflight with `python -m compat.gtx1080ti` and read [docs/GTX-1080-TI.md](docs/GTX-1080-TI.md). End-to-end model inference on Pascal is not currently verified.
+The reference setup below is documented for an NVIDIA A800 80 GB and uses BF16. It is not a general low-VRAM or Pascal recipe.
+
+An experimental Windows/Pascal path is included for GTX 1080 Ti (sm_61). It pins the reviewed Hugging Face model revision, uses FP16, disables the model's optional Triton/flex-attention/xFormers paths, and patches its hard-coded BF16 image tensors in memory to FP16:
+
+```powershell
+.\scripts\setup_gtx1080ti.ps1
+.\.venv\Scripts\python.exe -m compat.local_runner --input .\path\to\document.pdf --max-pages 1
+```
+
+Start with one page and the default 2,048 output-token limit. The dense PyTorch fallbacks may be slower and use more memory than the fused kernels. This path remains experimental until one-page and multi-page inference have been verified on a real GTX 1080 Ti. See [docs/GTX-1080-TI.md](docs/GTX-1080-TI.md) and [the decision record](docs/GTX-1080-TI-DECISION.md).
 
 ## Inference
 

@@ -9,3 +9,6 @@
 - **Alternatives:** No alternative backend has been validated for this hardware. Do not infer that disabling Triton or changing dtype is sufficient.
 - **Consequences:** Keep the original SGLang workflow intact. Provide a non-invasive preflight and a hardware-validation checklist. Only promote the status after a real one-page and multi-page inference run succeeds on Pascal.
 - **Next action:** Inspect the exact model revision's attention dispatch and test any non-Triton fallback; then run the model on the target GTX 1080 Ti and record peak VRAM and output checks.
+
+- **Prototype pointer:** `prototype/gtx1080ti-compat-gate` → `prototypes/gtx1080ti-compatibility-prototype.html` (throwaway state exploration; not production code).
+- **Tracking limitation:** GitHub Issues are disabled for this repository, so no issue could be created for the prototype handoff.

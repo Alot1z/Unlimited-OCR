@@ -55,7 +55,8 @@ small{color:#63718a}
     <label><input id="fp16" type="checkbox" checked> Basic FP16 CUDA smoke test passes</label>
     <label><input id="bf16" type="checkbox"> BF16 is supported</label>
     <label><input id="triton" type="checkbox"> Triton kernels supported on this GPU/OS</label>
-    <label><input id="fallback" type="checkbox"> Model non-Triton fallback verified end to end</label>
+    <label><input id="fallback-available" type="checkbox" checked> Pinned source contains a pure-PyTorch fallback</label>
+    <label><input id="fallback" type="checkbox"> Fallback verified end to end on sm_61</label>
   </div>
   <div class="panel">
     <h2>Current decision</h2>
@@ -74,39 +75,39 @@ small{color:#63718a}
 </section>
 <script>
 const $=id=>document.getElementById(id);
-const defaults={gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallback:false};
-function readState(){return{gpu:$("gpu").value,freeVramGiB:Number($("vram").value),pytorchArch:$("torch-arch").checked,fp16SmokeTest:$("fp16").checked,bf16Supported:$("bf16").checked,tritonSupported:$("triton").checked,nonTritonFallbackVerified:$("fallback").checked}}
+const defaults={gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallbackAvailable:true,fallbackAvailable:true,fallback:false};
+function readState(){return{gpu:$("gpu").value,freeVramGiB:Number($("vram").value),pytorchArch:$("torch-arch").checked,fp16SmokeTest:$("fp16").checked,bf16Supported:$("bf16").checked,tritonSupported:$("triton").checked,nonTritonFallbackAvailable:$("fallback-available").checked,nonTritonFallbackVerified:$("fallback").checked}}
 function evaluate(s){
  const blockers=[],warnings=[];
  if(!s.pytorchArch)blockers.push("PYTORCH_ARCH_MISSING");
  if(!s.fp16SmokeTest)blockers.push("FP16_CUDA_SMOKE_TEST_FAILED");
  if(s.freeVramGiB<6.23)blockers.push("INSUFFICIENT_FREE_VRAM_FOR_WEIGHTS");
  const pascal=Number(s.gpu)<7;
- if(pascal&&!s.tritonSupported&&!s.nonTritonFallbackVerified)blockers.push("TRITON_ARCH_UNSUPPORTED_WITHOUT_VERIFIED_FALLBACK");
+ if(pascal&&!s.tritonSupported&&!s.nonTritonFallbackAvailable)blockers.push("TRITON_ARCH_UNSUPPORTED_WITHOUT_FALLBACK");
  if(!s.bf16Supported)warnings.push("BF16_UNAVAILABLE: use of the documented BF16 path is not valid");
  if(s.freeVramGiB>=6.23)warnings.push("VRAM_HEADROOM_UNPROVEN: parameter estimate excludes runtime allocations");
- if(!s.nonTritonFallbackVerified&&pascal)warnings.push("Model fallback behavior remains unknown");
+ if(s.nonTritonFallbackAvailable&&!s.nonTritonFallbackVerified&&pascal)warnings.push("Pure-PyTorch fallback exists in source but is not yet verified on sm_61");
  return{status:blockers.length?"BLOCKED":"NEEDS_MODEL_SMOKE_TEST",blockers,warnings,modelInferenceVerified:false};
 }
 function render(){
  const s=readState(),d=evaluate(s);
  $("vram-value").textContent=s.freeVramGiB.toFixed(1)+" GiB";
  $("status").textContent=d.status;
- $("summary").textContent=d.status==="BLOCKED"?"At least one compatibility gate is unresolved. Do not start model inference on this configuration.":"No static blocker is represented in this scenario, but a real model smoke test is still required.";
+ $("summary").textContent=d.status==="BLOCKED"?"At least one compatibility gate is unresolved. Do not start model inference on this configuration.":"No static blocker is represented in this scenario, but a real model smoke test is still required." + (s.nonTritonFallbackAvailable&&!s.nonTritonFallbackVerified?" The source fallback is available but remains unverified on hardware.":"");
  $("state").textContent=JSON.stringify({inputs:s,decision:d},null,2);
 }
 function applyScenario(name){
  const presets={
   pascal:{...defaults},
-  fallback:{gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallback:true},
+  fallback:{gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallbackAvailable:true,fallback:true},
   newer:{gpu:"8.6",vram:"20",torchArch:true,fp16:true,bf16:true,triton:true,fallback:false}
  };
  const s=presets[name]||presets.pascal;
  $("gpu").value=s.gpu;$("vram").value=s.vram;$("torch-arch").checked=s.torchArch;
  $("fp16").checked=s.fp16;$("bf16").checked=s.bf16;$("triton").checked=s.triton;
- $("fallback").checked=s.fallback;render();
+ $("fallback-available").checked=s.fallbackAvailable;$("fallback").checked=s.fallback;render();
 }
-["gpu","vram","torch-arch","fp16","bf16","triton","fallback"].forEach(id=>$(id).addEventListener("input",render));
+["gpu","vram","torch-arch","fp16","bf16","triton","fallback-available","fallback"].forEach(id=>$(id).addEventListener("input",render));
 document.querySelectorAll("[data-scenario]").forEach(b=>b.addEventListener("click",()=>applyScenario(b.dataset.scenario)));
 $("reset").addEventListener("click",()=>applyScenario("pascal"));
 $("copy").addEventListener("click",()=>navigator.clipboard?.writeText($("state").textContent));

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROTOTYPE — Unlimited-OCR Pascal compatibility gate</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172033;background:#f4f6fa}
+body{margin:0;padding:24px;max-width:1080px;margin-inline:auto}
+header,.panel{background:#fff;border:1px solid #d9dfeb;border-radius:10px;padding:18px;margin-bottom:14px}
+h1{font-size:1.35rem;margin:0 0 8px}
+h2{font-size:1rem;margin:0 0 12px}
+p{line-height:1.5;color:#4b5870}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+label{display:block;font-size:.92rem;margin:10px 0}
+input[type=checkbox]{margin-right:8px}
+input[type=range]{width:100%}
+button{border:1px solid #bac5d8;background:#f8faff;border-radius:7px;padding:9px 12px;margin:4px;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid #3978d5;outline-offset:2px}
+.actions{display:flex;flex-wrap:wrap;gap:6px}
+.status{font-weight:700;font-size:1.1rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101827;color:#e8eef9;padding:14px;border-radius:8px;min-height:180px}
+small{color:#63718a}
+.warning{border-left:4px solid #c47b18;padding-left:12px}
+</style>
+</head>
+<body>
+<header>
+  <small>THROWAWAY LOGIC PROTOTYPE · NOT PRODUCTION CODE</small>
+  <h1>Unlimited-OCR-2 · Pascal compatibility gate</h1>
+  <p>Explore which hardware and kernel conditions block a local inference claim. This prototype uses simulated inputs only; it never loads a model or accesses the GPU.</p>
+</header>
+<section class="panel">
+  <h2>Guided scenarios</h2>
+  <div class="actions">
+    <button data-scenario="pascal">1. GTX 1080 Ti baseline</button>
+    <button data-scenario="fallback">2. Hypothetical verified fallback</button>
+    <button data-scenario="newer">3. Newer GPU candidate</button>
+  </div>
+</section>
+<section class="grid">
+  <div class="panel">
+    <h2>Hardware and runtime inputs</h2>
+    <label>GPU architecture
+      <select id="gpu">
+        <option value="6.1">Pascal · sm_61</option>
+        <option value="7.5">Turing · sm_75</option>
+        <option value="8.6">Ampere · sm_86</option>
+      </select>
+    </label>
+    <label>Free VRAM: <strong id="vram-value">9.0 GiB</strong>
+      <input id="vram" type="range" min="1" max="24" step=".5" value="9">
+    </label>
+    <label><input id="torch-arch" type="checkbox" checked> PyTorch has a compatible CUDA architecture target</label>
+    <label><input id="fp16" type="checkbox" checked> Basic FP16 CUDA smoke test passes</label>
+    <label><input id="bf16" type="checkbox"> BF16 is supported</label>
+    <label><input id="triton" type="checkbox"> Triton kernels supported on this GPU/OS</label>
+    <label><input id="fallback" type="checkbox"> Model non-Triton fallback verified end to end</label>
+  </div>
+  <div class="panel">
+    <h2>Current decision</h2>
+    <div class="status" id="status">BLOCKED</div>
+    <p id="summary"></p>
+    <p class="warning">FP16 weight storage is estimated at 6.23 GiB. This excludes activations, cache, temporary tensors, and CUDA context.</p>
+    <div class="actions">
+      <button id="reset">Reset baseline</button>
+      <button id="copy">Copy state JSON</button>
+    </div>
+  </div>
+</section>
+<section class="panel">
+  <h2>Full state after every action</h2>
+  <pre id="state" aria-live="polite"></pre>
+</section>
+<script>
+const $=id=>document.getElementById(id);
+const defaults={gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallback:false};
+function readState(){return{gpu:$("gpu").value,freeVramGiB:Number($("vram").value),pytorchArch:$("torch-arch").checked,fp16SmokeTest:$("fp16").checked,bf16Supported:$("bf16").checked,tritonSupported:$("triton").checked,nonTritonFallbackVerified:$("fallback").checked}}
+function evaluate(s){
+ const blockers=[],warnings=[];
+ if(!s.pytorchArch)blockers.push("PYTORCH_ARCH_MISSING");
+ if(!s.fp16SmokeTest)blockers.push("FP16_CUDA_SMOKE_TEST_FAILED");
+ if(s.freeVramGiB<6.23)blockers.push("INSUFFICIENT_FREE_VRAM_FOR_WEIGHTS");
+ const pascal=Number(s.gpu)<7;
+ if(pascal&&!s.tritonSupported&&!s.nonTritonFallbackVerified)blockers.push("TRITON_ARCH_UNSUPPORTED_WITHOUT_VERIFIED_FALLBACK");
+ if(!s.bf16Supported)warnings.push("BF16_UNAVAILABLE: use of the documented BF16 path is not valid");
+ if(s.freeVramGiB>=6.23)warnings.push("VRAM_HEADROOM_UNPROVEN: parameter estimate excludes runtime allocations");
+ if(!s.nonTritonFallbackVerified&&pascal)warnings.push("Model fallback behavior remains unknown");
+ return{status:blockers.length?"BLOCKED":"NEEDS_MODEL_SMOKE_TEST",blockers,warnings,modelInferenceVerified:false};
+}
+function render(){
+ const s=readState(),d=evaluate(s);
+ $("vram-value").textContent=s.freeVramGiB.toFixed(1)+" GiB";
+ $("status").textContent=d.status;
+ $("summary").textContent=d.status==="BLOCKED"?"At least one compatibility gate is unresolved. Do not start model inference on this configuration.":"No static blocker is represented in this scenario, but a real model smoke test is still required.";
+ $("state").textContent=JSON.stringify({inputs:s,decision:d},null,2);
+}
+function applyScenario(name){
+ const presets={
+  pascal:{...defaults},
+  fallback:{gpu:"6.1",vram:"9",torchArch:true,fp16:true,bf16:false,triton:false,fallback:true},
+  newer:{gpu:"8.6",vram:"20",torchArch:true,fp16:true,bf16:true,triton:true,fallback:false}
+ };
+ const s=presets[name]||presets.pascal;
+ $("gpu").value=s.gpu;$("vram").value=s.vram;$("torch-arch").checked=s.torchArch;
+ $("fp16").checked=s.fp16;$("bf16").checked=s.bf16;$("triton").checked=s.triton;
+ $("fallback").checked=s.fallback;render();
+}
+["gpu","vram","torch-arch","fp16","bf16","triton","fallback"].forEach(id=>$(id).addEventListener("input",render));
+document.querySelectorAll("[data-scenario]").forEach(b=>b.addEventListener("click",()=>applyScenario(b.dataset.scenario)));
+$("reset").addEventListener("click",()=>applyScenario("pascal"));
+$("copy").addEventListener("click",()=>navigator.clipboard?.writeText($("state").textContent));
+applyScenario("pascal");
+</script>
+</body>
+</html>

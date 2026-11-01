@@ -1,6 +1,18 @@
+import sys
+import types
 import unittest
+from types import SimpleNamespace
 
 from compat.gtx1080ti import assess_device, estimate_weight_memory_gib
+from compat.local_runner import apply_pascal_runtime_overrides, cast_image_inputs, patch_image_builder
+
+
+class FakeTensor:
+    def __init__(self, dtype=None):
+        self.dtype = dtype
+
+    def to(self, dtype):
+        return FakeTensor(dtype=dtype)
 
 
 class WeightEstimateTests(unittest.TestCase):
@@ -17,7 +29,7 @@ class WeightEstimateTests(unittest.TestCase):
 
 
 class DeviceAssessmentTests(unittest.TestCase):
-    def test_pascal_with_triton_model_path_is_blocked(self):
+    def test_pascal_reports_dense_fallback_candidate_not_verified_support(self):
         report = assess_device(
             name="NVIDIA GeForce GTX 1080 Ti",
             capability=(6, 1),
@@ -25,10 +37,10 @@ class DeviceAssessmentTests(unittest.TestCase):
             free_vram_gib=9.0,
             architectures=["sm_50", "sm_60", "sm_61", "sm_70"],
             bf16_supported=False,
-            triton_installed=True,
+            triton_installed=False,
         )
-        self.assertEqual(report["status"], "BLOCKED")
-        self.assertIn("TRITON_ARCH_UNSUPPORTED", report["blockers"])
+        self.assertEqual(report["status"], "NEEDS_MODEL_SMOKE_TEST")
+        self.assertIn("TRITON_FALLBACK_AVAILABLE_UNVERIFIED", [x["code"] for x in report["findings"]])
         self.assertFalse(report["bf16_supported"])
         self.assertFalse(report["model_inference_verified"])
 
@@ -83,6 +95,61 @@ class DeviceAssessmentTests(unittest.TestCase):
             triton_installed=True,
         )
         self.assertIn("INSUFFICIENT_FREE_VRAM_FOR_WEIGHTS", report["blockers"])
+
+    def test_missing_non_triton_fallback_blocks_pascal(self):
+        report = assess_device(
+            name="Pascal GPU",
+            capability=(6, 1),
+            total_vram_gib=11.0,
+            free_vram_gib=9.0,
+            architectures=["sm_60"],
+            bf16_supported=False,
+            triton_installed=False,
+            non_triton_fallback_available=False,
+        )
+        self.assertIn("TRITON_ARCH_UNSUPPORTED", report["blockers"])
+
+
+class LocalRunnerTests(unittest.TestCase):
+    def test_runtime_overrides_disable_every_custom_kernel_backend(self):
+        config = SimpleNamespace(sparse_attention_config={
+            "dash_use_triton": True,
+            "use_flex_attention": True,
+            "use_xformers": True,
+        })
+        env = {}
+        apply_pascal_runtime_overrides(config, env)
+        self.assertFalse(config.sparse_attention_config["dash_use_triton"])
+        self.assertFalse(config.sparse_attention_config["use_flex_attention"])
+        self.assertFalse(config.sparse_attention_config["use_xformers"])
+        self.assertEqual(env["GATHER_ATTN_TRITON"], "0")
+        self.assertEqual(env["INDEXER_SCORE_TRITON"], "0")
+
+    def test_cast_image_inputs_converts_both_image_batches(self):
+        result = (object(), (FakeTensor(), FakeTensor()), object(), object())
+        converted = cast_image_inputs(result, dtype="float16")
+        self.assertEqual(converted[1][0].dtype, "float16")
+        self.assertEqual(converted[1][1].dtype, "float16")
+
+    def test_patch_image_builder_casts_hardcoded_bfloat16_inputs(self):
+        module_name = "fake_unlimited_ocr_remote_module"
+        module = types.ModuleType(module_name)
+        module._uocr_build_inputs = lambda *args, **kwargs: (
+            "ids", (FakeTensor("bfloat16"), FakeTensor("bfloat16")), "mask", "spatial"
+        )
+        sys.modules[module_name] = module
+
+        class FakeModel:
+            pass
+
+        FakeModel.__module__ = module_name
+        try:
+            patch_image_builder(FakeModel(), dtype="float16")
+            result = module._uocr_build_inputs(None, "prompt", [])
+            self.assertEqual(result[1][0].dtype, "float16")
+            self.assertEqual(result[1][1].dtype, "float16")
+        finally:
+            sys.modules.pop(module_name, None)
 
 
 if __name__ == "__main__":
